@@ -253,10 +253,28 @@ pacman -Q filesystem $SH_FOR_REBASE rebase \
 		mingw-w64-$ARCH-xpdf-tools) \
 	>>"$PACKAGE_VERSIONS_FILE"
 
+test -n "$ETC_GITCONFIG" ||
+ETC_GITCONFIG=etc/gitconfig
+
+test etc/gitconfig != "$ETC_GITCONFIG" ||
+test -f /etc/gitconfig ||
+test ! -f /mingw$BITNESS/etc/gitconfig ||
+{ mkdir -p /etc && cp /mingw$BITNESS/etc/gitconfig /etc/gitconfig; } ||
+die "Could not copy system gitconfig into new location"
+
+test -n "$ETC_GITATTRIBUTES" ||
+ETC_GITATTRIBUTES="${ETC_GITCONFIG%/*}/gitattributes"
+
+test etc/gitattributes != "$ETC_GITATTRIBUTES" ||
+test -f /etc/gitattributes ||
+test ! -f /mingw$BITNESS/etc/gitattributes ||
+cp /mingw$BITNESS/etc/gitattributes /etc/gitattributes ||
+die "Could not copy system gitattributes into new location"
+
 cat <<EOF
 etc/fstab
 etc/nsswitch.conf
-mingw$BITNESS/etc/gitconfig
+$ETC_GITATTRIBUTES
 usr/bin/rebase.exe
 usr/bin/rebaseall
 EOF
@@ -272,10 +290,10 @@ etc/bash.bashrc
 etc/msystem
 usr/bin/dash.exe
 usr/bin/getopt.exe
-mingw$BITNESS/etc/gitattributes
 EOF
 
 test -n "$MINIMAL_GIT" || cat <<EOF
+$ETC_GITCONFIG
 etc/post-install/01-devices.post
 etc/post-install/03-mtab.post
 etc/post-install/06-windows-files.post

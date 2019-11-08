@@ -93,25 +93,29 @@ die "Could not install bin/ redirectors"
 cp "$SCRIPT_PATH/../post-install.bat" "$SCRIPT_PATH/root/" ||
 die "Could not copy post-install script"
 
-mkdir -p "$SCRIPT_PATH/root/mingw$BITNESS/etc" &&
-cp /mingw$BITNESS/etc/gitconfig \
-	"$SCRIPT_PATH/root/mingw$BITNESS/etc/gitconfig" &&
-git config -f "$SCRIPT_PATH/root/mingw$BITNESS/etc/gitconfig" \
+etc_gitconfig="$(git -c core.editor=echo config --system -e 2>/dev/null)" &&
+etc_gitconfig="$(cygpath -au "$etc_gitconfig")" &&
+etc_gitconfig="${etc_gitconfig#/}" ||
+die "Could not determine the path of the system config"
+
+# Make a list of files to include
+LIST="$(ARCH=$ARCH BITNESS=$BITNESS ETC_GITCONFIG="$etc_gitconfig" \
+	PACKAGE_VERSIONS_FILE="$SCRIPT_PATH"/root/etc/package-versions.txt \
+	sh "$SCRIPT_PATH"/../make-file-list.sh "$@" |
+	grep -v "^$etc_gitconfig$")" ||
+die "Could not generate file list"
+
+mkdir -p "$SCRIPT_PATH/root/${etc_gitconfig%/*}" &&
+cp /"$etc_gitconfig" "$SCRIPT_PATH/root/$etc_gitconfig" &&
+git config -f "$SCRIPT_PATH/root/$etc_gitconfig" \
 	credential.helper manager ||
 die "Could not configure Git-Credential-Manager as default"
 test 64 != $BITNESS ||
-git config -f "$SCRIPT_PATH/root/mingw$BITNESS/etc/gitconfig" --unset pack.packSizeLimit
-
-# Make a list of files to include
-LIST="$(ARCH=$ARCH BITNESS=$BITNESS \
-	PACKAGE_VERSIONS_FILE="$SCRIPT_PATH"/root/etc/package-versions.txt \
-	sh "$SCRIPT_PATH"/../make-file-list.sh "$@" |
-	grep -v "^mingw$BITNESS/etc/gitconfig$")" ||
-die "Could not generate file list"
+git config -f "$SCRIPT_PATH/root/$etc_gitconfig" --unset pack.packSizeLimit
 
 case "$LIST" in
 */git-credential-helper-selector.exe*)
-	git config -f "$SCRIPT_PATH/root/mingw$BITNESS/etc/gitconfig" \
+	git config -f "$SCRIPT_PATH/root/$etc_gitconfig" \
 		credential.helper helper-selector
 	;;
 esac

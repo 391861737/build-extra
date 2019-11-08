@@ -213,7 +213,7 @@ sync () { # [--force]
 	y_opt=y
 	while case "$1" in
 	--force)
-		force=--force
+		force='--overwrite=\*'
 		y_opt=yy
 		;;
 	-*) die "Unknown option: %s\n" "$1";;
@@ -240,7 +240,7 @@ sync () { # [--force]
 		die 'Could not keep files as planned\n'
 
 		"$sdk/git-cmd.exe" --cd="$sdk" --command=usr\\bin\\bash.exe \
-			-lc "pacman.exe -Su $force --noconfirm" ||
+			-lc 'pacman.exe -Su '$force' --noconfirm' ||
 		die "Could not update packages in %s\n" "$sdk"
 
 		"$sdk/git-cmd.exe" --command=usr\\bin\\bash.exe -l -c '
@@ -4343,17 +4343,7 @@ publish () { #
 
 	git_src_dir="$sdk64/usr/src/MINGW-packages/mingw-w64-git/src/git" &&
 	nextver=v"$version" &&
-	(cd "$git_src_dir" &&
-	 git push git-for-windows "$nextver" &&
-	 mirrors="$( git config --get-regexp 'remote\..*\.releasemirror' |
-		sed -n 's/^remote.\(.*\).releasemirror true$/\1/p')" &&
-	 if test -n "$mirrors"
-	 then
-		for remote in $mirrors
-		do
-			git push $remote "$nextver^{commit}:master" "$nextver"
-		done
-	 fi) ||
+	git -C "$git_src_dir" push git-for-windows "$nextver" ||
 	die "Could not push tag %s in %s\n" "$nextver" "$git_src_dir"
 
 	url=https://api.github.com/repos/git-for-windows/git/releases

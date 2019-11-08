@@ -1,5 +1,5 @@
-# Git for Windows v2.23.0 Release Notes
-Latest update: August 17th 2019
+# Git for Windows v2.24.0(2) Release Notes
+Latest update: November 6th 2019
 
 ## Introduction
 
@@ -33,13 +33,30 @@ Git for Windows also contains Embedded CAcert Root Certificates. For more inform
 
 This package contains software from a number of other projects including Bash, zlib, curl, tcl/tk, perl, MSYS2 and a number of libraries and utilities from the GNU project, licensed under the GNU General Public License. Likewise, it contains Perl which is dual licensed under the GNU General Public License and the Artistic License.
 
-## Changes since Git for Windows v2.23.0 (August 17th 2019)
+## Changes since Git for Windows v2.24.0 (November 4th 2019)
 
 ### New Features
 
+* Comes with [cURL v7.67.0](https://curl.haxx.se/changes.html#7_67_0).
+
+### Bug Fixes
+
+* Using `http.extraHeader` [no longer results in spurious crashes](https://github.com/gitgitgadget/git/pull/453).
+* The `/proc/{stdin,stdout,stderr}` pseudo-symlinks [are now installed properly even with non-US locales](https://github.com/git-for-windows/build-extra/pull/265).
+* A bug [was fixed](https://github.com/git-for-windows/git/pull/2391) that prevented `gitk` from refreshing after new changes were committed.
+
+## Changes since Git for Windows v2.23.0 (August 17th 2019)
+
+Note! As a consequence of making `git config --system` work as expected, the location of the system config is now `C:\Program Files\Git\etc\gitconfig` (no longer split between `C:\Program Files\Git\mingw64\etc\gitconfig` and `C:\ProgramData\Git\config`), and likewise the location of the system gitattributes is now `C:\Program Files\Git\etc\gitattributes` (no longer `C:\Program Files\Git\mingw64\etc\gitattributes`). Any manual modifications to `C:\ProgramData\Git\config` need to be ported manually.
+
+### New Features
+
+* Comes with [Git v2.24.0](https://github.com/git/git/blob/v2.24.0/Documentation/RelNotes/2.24.0.txt).
 * Comes with [cURL v7.66.0](https://curl.haxx.se/changes.html#7_66_0).
 * Comes with [Git Credential Manager v1.20.0](https://github.com/Microsoft/Git-Credential-Manager-for-Windows/releases/tag/1.20.0).
 * Comes with [OpenSSH v8.1p1](https://www.openssh.com/txt/release-8.1).
+* Comes with [OpenSSL v1.1.1d](https://www.openssl.org/news/openssl-1.1.1-notes.html).
+* Comes with [Git LFS v2.9.0](https://github.com/git-lfs/git-lfs/releases/tag/v2.9.0).
 
 ### Bug Fixes
 
@@ -47,6 +64,12 @@ This package contains software from a number of other projects including Bash, z
 * The default config [no longer skips `git-lfs` downloads](https://github.com/git-for-windows/build-extra/pull/256).
 * Starting with cURL v7.66.0, [`$HOME/.netrc` can be used](https://github.com/curl/curl/commit/f9c7ba9096ec29db2536481d8e9ebe314e007f0c) instead of `$HOME/_netrc` (but it will still fall back to looking for the latter).
 * The installer's "ProductVersion" [is now consistent with older Git for Windows versions'](https://github.com/git-for-windows/build-extra/pull/257).
+* [Makes `git config --system` work like you think it should](https://github.com/git-for-windows/git/pull/2358).
+* The (still experimental) built-in `git add -p` [no longer gets confused about incomplete lines](https://github.com/git-for-windows/git/pull/2368) (i.e. a file's l last line that does not end in a Line Feed).
+* A buffer overrun in the code to determine which files need to be marked as hidden [was plugged](https://github.com/git-for-windows/git/pull/2371).
+* The support for `sendpack.sideband` that was removed by mistake [was re-introduced](https://github.com/git-for-windows/git/pull/2375), to support `git push` via the `git://` protocol again.
+* `git stash` [no longer records skip-worktree files as deleted](https://github.com/git-for-windows/git/pull/2378) after resolving merge conflicts in them.
+* The Git for Windows installer [no longer complains about a downgrade](https://github.com/git-for-windows/build-extra/pull/264) when upgrading from an `-rc` version, i.e. from a pre-release leading up to the next major version.
 
 ## Changes since Git for Windows v2.22.0 (June 8th 2019)
 

@@ -649,6 +649,10 @@ begin
         Result:='(no output)'
     else
         Result:=Contents;
+    if (Length(Result)>0) and (Result[Length(Result)]=#10) then
+        SetLength(Result,Length(Result)-1);
+    if (Length(Result)>0) and (Result[Length(Result)]=#13) then
+        SetLength(Result,Length(Result)-1);
 end;
 
 function GitSystemConfigSet(Key,Value:String):Boolean;
@@ -812,6 +816,13 @@ begin
         if Previous<0 then begin
             if Current>=0 then
                 Result:=+1;
+            Result:=Ord(CurrentVersion[i])-Ord(PreviousVersion[j]);
+            if (Result=0) then begin
+                // skip identical non-numerical characters
+                i:=i+1;
+                j:=j+1;
+                Continue;
+            end;
             Exit;
         end;
         if Current<0 then begin
@@ -858,6 +869,36 @@ begin
     ExitProcess(0);
 end;
 
+function CountDots(S:String):Integer;
+var
+    i:Integer;
+begin
+    Result:=0;
+    for i:=1 to Length(S) do
+        if (S[i]=#46) then
+            Result:=Result+1;
+end;
+
+function IsDowngrade(CurrentVersion,PreviousVersion:String):Boolean;
+var
+    Path:String;
+    i,j,CurrentLength,PreviousLength:Integer;
+begin
+    Result:=(VersionCompare(CurrentVersion,PreviousVersion)<0);
+#ifdef GIT_VERSION
+    if Result or (CountDots(CurrentVersion)>3) or (CountDots(PreviousVersion)>3) then begin
+        // maybe the previous version was a prerelease (prereleases have five numbers: v2.24.0-rc1.windows.1 reduces to '2.24.0.1.1')?
+        if (RegQueryStringValue(HKEY_LOCAL_MACHINE,'Software\GitForWindows','InstallPath',Path))
+                and (Exec(ExpandConstant('{cmd}'),'/c ""'+Path+'\cmd\git.exe" version >"'+ExpandConstant('{tmp}')+'\previous.version""','',SW_HIDE,ewWaitUntilTerminated,i))
+                and (i=0) then begin
+            CurrentVersion:='{#GIT_VERSION}';
+            PreviousVersion:=ReadFileAsString(ExpandConstant('{tmp}\previous.version'));
+            Result:=(VersionCompare(CurrentVersion,PreviousVersion)<0);
+        end;
+    end;
+#endif
+end;
+
 function InitializeSetup:Boolean;
 var
     CurrentVersion,Msg:String;
@@ -886,7 +927,7 @@ begin
 #if APP_VERSION!='0-test'
     if Result and not ParamIsSet('ALLOWDOWNGRADE') then begin
         CurrentVersion:=ExpandConstant('{#APP_VERSION}');
-        if (VersionCompare(CurrentVersion,PreviousGitForWindowsVersion)<0) then begin
+        if IsDowngrade(CurrentVersion,PreviousGitForWindowsVersion) then begin
             if WizardSilent() and (ParamIsSet('SKIPDOWNGRADE') or ParamIsSet('VSNOTICE')) then begin
                 Msg:='Skipping downgrade from '+PreviousGitForWindowsVersion+' to '+CurrentVersion;
                 if ParamIsSet('SKIPDOWNGRADE') or (ExpandConstant('{log}')='') then
@@ -2184,22 +2225,16 @@ end;
 procedure CleanupWhenUpgrading;
 var
     ErrorCode:Integer;
-    ProgramData:String;
 begin
     if UninstallAppPath<>'' then begin
         // Save a copy of the system config so that we can copy it back later
-        if FileExists(UninstallAppPath+'\{#MINGW_BITNESS}\etc\gitconfig') and
-            (not FileCopy(UninstallAppPath+'\{#MINGW_BITNESS}\etc\gitconfig',ExpandConstant('{tmp}\gitconfig.system'),True)) then
+        if FileExists(UninstallAppPath+'\{#MINGW_BITNESS}\etc\gitconfig') then begin
+            if (not FileCopy(UninstallAppPath+'\{#MINGW_BITNESS}\etc\gitconfig',ExpandConstant('{tmp}\gitconfig.system'),True)) then
+                LogError('Could not save system config; continuing anyway');
+        // Save a copy of the system config so that we can copy it back later
+        end else if FileExists(UninstallAppPath+'\etc\gitconfig') and
+            (not FileCopy(UninstallAppPath+'\etc\gitconfig',ExpandConstant('{tmp}\gitconfig.system'),True)) then
             LogError('Could not save system config; continuing anyway');
-
-        ProgramData:=ExpandConstant('{commonappdata}');
-        if FileExists(UninstallAppPath+'\etc\gitconfig') and not FileExists(ProgramData+'\Git\config') then begin
-            if not ForceDirectories(ProgramData+'\Git') then
-                LogError('Could not initialize Windows-wide Git config.')
-            else if not FileCopy(UninstallAppPath+'\etc\gitconfig',ProgramData+'\Git\config',False) then
-                LogError('Could not copy old Git config to Windows-wide location.');
-        end;
-
     end;
 
     if UninstallString<>'' then begin
@@ -2333,10 +2368,25 @@ function GetFileAttributes(Path:PAnsiChar):DWORD;
 function SetFileAttributes(Path:PAnsiChar;dwFileAttributes:DWORD):BOOL;
 external 'SetFileAttributesA@kernel32.dll stdcall';
 
+function CryptStringToBinary(sz:string;cch:LongWord;flags:LongWord;binary:string;var size:LongWord;skip:LongWord;flagsused:LongWord):Integer;
+external 'CryptStringToBinaryW@crypt32.dll stdcall';
+
+const
+  CRYPT_STRING_HEX = $04;
+  HEX_CHARS = '0123456789abcdef';
+
+function CharToHex(C:Integer):string;
+begin
+    Result:=HEX_CHARS[((C div 16) and 15)+1]+HEX_CHARS[(C and 15)+1];
+end;
+
 function CreateCygwinSymlink(SymlinkPath,TargetPath:String):Boolean;
 var
     Attribute:DWord;
     i:Integer;
+    Hex,Buffer:string;
+    Stream:TStream;
+    Size:LongWord;
 begin
     Result:=True;
 
@@ -2344,13 +2394,24 @@ begin
     for i:=Length(TargetPath) downto 1 do
         TargetPath:=Copy(TargetPath,1,i)+#0+Copy(TargetPath,i+1,Length(TargetPath)-i);
 
-    // insert `!<symlink>\xff\xfe` prefix, and append `\0\0`
-    TargetPath:='!<symlink>'+#255+#254+TargetPath+#0+#0;
+    Hex:='213c73796d6c696e6b3efffe'; // "!<symlink>\xff\xfe"
+    for i:=1 to Length(TargetPath) do
+        Hex:=Hex+CharToHex(Ord(TargetPath[i])); // append wide characters as hex
+    Hex:=Hex+'0000'; // append a wide NUL
 
     // write the file
-    if not SaveStringToFile(SymlinkPath,TargetPath,False) then begin
-        LogError('Could not write "'+SymlinkPath+'"');
+    Stream:=TFileStream.Create(SymlinkPath,fmCreate);
+    try
+        Size:=Length(Hex) div 2;
+        SetLength(Buffer,Size);
+        if (CryptStringToBinary(Hex,Length(Hex),CRYPT_STRING_HEX,Buffer,Size,0,0)=0) or (Size<>Length(Hex) div 2) then
+            RaiseException('could not decode hex '+Hex);
+        Stream.WriteBuffer(Buffer,Size);
+    except
+        LogError('Could not write "'+SymlinkPath+'" '+GetExceptionMessage());
         Result:=False;
+    finally
+        Stream.Free
     end;
 
     // Set system bit (required for Cygwin to interpret this as a symlink)
@@ -2367,7 +2428,7 @@ end;
 
 procedure CurStepChanged(CurStep:TSetupStep);
 var
-    ProgramData,DllPath,FileName,Cmd,Msg,Ico:String;
+    DllPath,FileName,Cmd,Msg,Ico:String;
     BuiltIns,ImageNames,EnvPath:TArrayOfString;
     Count,i:Longint;
     RootKey:Integer;
@@ -2394,7 +2455,6 @@ begin
     end;
 
     AppDir:=ExpandConstant('{app}');
-    ProgramData:=ExpandConstant('{commonappdata}');
 
     {
         Copy dlls from "/mingw64/bin" to "/mingw64/libexec/git-core" if they are
@@ -2467,26 +2527,12 @@ begin
     end else
         LogError('Line {#__LINE__}: Unable to read file "{#MINGW_BITNESS}\{#APP_BUILTINS}".');
 
-    // Create default ProgramData git config file
-    if not FileExists(ProgramData + '\Git\config') then begin
-        if not DirExists(ProgramData + '\Git') then begin
-            if not CreateDir(ProgramData + '\Git') then begin
-                Log('Line {#__LINE__}: Creating directory "' + ProgramData + '\Git" failed.');
-            end;
-        end;
-        if not FileExists(ExpandConstant('{tmp}\programdata-config.template')) then
-            ExtractTemporaryFile('programdata-config.template');
-        if not FileCopy(ExpandConstant('{tmp}\programdata-config.template'), ProgramData + '\Git\config', True) then begin
-            Log('Line {#__LINE__}: Creating initial "' + ProgramData + '\Git\config" failed.');
-        end;
-    end;
-
     // Copy previous system wide git config file, if any
     if FileExists(ExpandConstant('{tmp}\gitconfig.system')) then begin
-        if (not ForceDirectories(AppDir+'\{#MINGW_BITNESS}\etc')) then
-            LogError('Failed to create \{#MINGW_BITNESS}\etc; continuing anyway')
+        if (not ForceDirectories(AppDir+'\{#ETC_GITCONFIG_DIR}')) then
+            LogError('Failed to create \{#ETC_GITCONFIG_DIR}; continuing anyway')
         else
-            FileCopy(ExpandConstant('{tmp}\gitconfig.system'),AppDir+'\{#MINGW_BITNESS}\etc\gitconfig',True)
+            FileCopy(ExpandConstant('{tmp}\gitconfig.system'),AppDir+'\{#ETC_GITCONFIG_DIR}\gitconfig',True)
     end;
 
     {
@@ -2505,35 +2551,25 @@ begin
     else
         GitSystemConfigSet('http.sslBackend','openssl');
 
-    if FileExists(ProgramData+'\Git\config') then begin
-        if not Exec(AppDir+'\bin\bash.exe','-c "value=\"$(git config -f config pack.packsizelimit)\" && if test 2g = \"$value\"; then git config -f config --unset pack.packsizelimit; fi"',ProgramData+'\Git',SW_HIDE,ewWaitUntilTerminated,i) then
-            LogError('Unable to remove packsize limit from ProgramData config');
-        Cmd:=AppDir+'/';
+    if not RdbCurlVariant[GC_WinSSL].Checked then begin
+        Cmd:=AppDir+'/{#MINGW_BITNESS}/ssl/certs/ca-bundle.crt';
         StringChangeEx(Cmd,'\','/',True);
-        if not Exec(AppDir+'\bin\bash.exe','-c "value=\"$(git config -f config http.sslcainfo)\" && case \"$value\" in \"'+Cmd+'\"/*|\"C:/Program Files/Git/\"*|\"c:/Program Files/Git/\"*) git config -f config --unset http.sslcainfo;; esac"',ProgramData+'\Git',SW_HIDE,ewWaitUntilTerminated,i) then
-            LogError('Unable to delete http.sslCAInfo from ProgramData config');
-        if not RdbCurlVariant[GC_WinSSL].Checked then begin
-            Cmd:=AppDir+'/{#MINGW_BITNESS}/ssl/certs/ca-bundle.crt';
-            StringChangeEx(Cmd,'\','/',True);
-            GitSystemConfigSet('http.sslCAInfo',Cmd);
-         end else
-            GitSystemConfigSet('http.sslCAInfo',#0);
-    end;
+        GitSystemConfigSet('http.sslCAInfo',Cmd);
+    end else
+        GitSystemConfigSet('http.sslCAInfo',#0);
 
     {
         Adapt core.autocrlf
     }
 
     if RdbCRLF[GC_LFOnly].checked then begin
-        Cmd:='core.autocrlf input';
+        Cmd:='input';
     end else if RdbCRLF[GC_CRLFAlways].checked then begin
-        Cmd:='core.autocrlf true';
+        Cmd:='true';
     end else begin
-        Cmd:='core.autocrlf false';
+        Cmd:='false';
     end;
-    if not Exec(AppDir + '\{#MINGW_BITNESS}\bin\git.exe', 'config -f config ' + Cmd,
-                ProgramData + '\Git', SW_HIDE, ewWaitUntilTerminated, i) then
-        LogError('Unable to configure the line ending conversion: ' + Cmd);
+    GitSystemConfigSet('core.autocrlf',Cmd);
 
     {
         Configure the terminal window for Git Bash
@@ -2547,24 +2583,17 @@ begin
         Configure extra options
     }
 
-    if RdbExtraOptions[GP_FSCache].checked then begin
-        Cmd:='core.fscache true';
-
-        if not Exec(AppDir + '\{#MINGW_BITNESS}\bin\git.exe', 'config -f config ' + Cmd,
-                    ProgramData + '\Git', SW_HIDE, ewWaitUntilTerminated, i) then
-            LogError('Unable to enable the extra option: ' + Cmd);
-    end;
+    if RdbExtraOptions[GP_FSCache].checked then
+        GitSystemConfigSet('core.fscache','true');
 
     if RdbExtraOptions[GP_GCM].checked then
         GitSystemConfigSet('credential.helper','manager');
 
     if RdbExtraOptions[GP_Symlinks].checked then
-        Cmd:='core.symlinks true'
+        Cmd:='true'
     else
-        Cmd:='core.symlinks false';
-    if not Exec(AppDir + '\{#MINGW_BITNESS}\bin\git.exe', 'config -f config ' + Cmd,
-                ProgramData + '\Git', SW_HIDE, ewWaitUntilTerminated, i) then
-        LogError('Unable to enable the extra option: ' + Cmd);
+        Cmd:='false';
+    GitSystemConfigSet('core.symlinks',Cmd);
 
     {
         Configure experimental options

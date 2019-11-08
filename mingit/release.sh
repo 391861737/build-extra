@@ -54,6 +54,11 @@ case "$SCRIPT_PATH" in
 	;;
 esac
 
+etc_gitconfig="$(git -c core.editor=echo config --system -e 2>/dev/null)" &&
+etc_gitconfig="$(cygpath -au "$etc_gitconfig")" &&
+etc_gitconfig="${etc_gitconfig#/}" ||
+die "Could not determine the path of the system config"
+
 rm -rf "$SCRIPT_PATH"/root &&
 mkdir -p "$SCRIPT_PATH"/root ||
 die "Could not create overlay directory"
@@ -72,10 +77,20 @@ test -z "$include_pdbs" || {
 die "Could not unpack .pdb files"
 
 # Make a list of files to include
-LIST="$(ARCH=$ARCH BITNESS=$BITNESS MINIMAL_GIT=1 \
+LIST="$(ARCH=$ARCH BITNESS=$BITNESS MINIMAL_GIT=1 ETC_GITCONFIG="$etc_gitconfig" \
 	PACKAGE_VERSIONS_FILE="$SCRIPT_PATH"/root/etc/package-versions.txt \
 	sh "$SCRIPT_PATH"/../make-file-list.sh "$@")" ||
 die "Could not generate file list"
+
+cat >"$SCRIPT_PATH"/root/"$etc_gitconfig" <<EOF ||
+[include]
+	; include Git for Windows' system config in order
+	; to inherit settings like \`core.autocrlf\`
+	path = C:/Program Files (x86)/Git/etc/gitconfig
+	path = C:/Program Files/Git/etc/gitconfig
+$(cat "/$etc_gitconfig")
+EOF
+die "Could not generate system config"
 
 # Make the archive
 
